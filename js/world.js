@@ -1,513 +1,663 @@
-// ── World: Ancient Alexandria, 30 BC ─────────────────────────────────────────
+// ── World: Ancient Alexandria 30 BC  (Low-Poly Reference Quality) ─────────────
 const World = (() => {
     let scene;
     let waterMesh, beaconLight;
 
-    // Shared height formula (must match player.js groundY)
+    // Shared height (matches player.js)
     function terrainH(x, z) {
         return Math.sin(x * 0.05) * 0.45
              + Math.cos(z * 0.07) * 0.32
              + Math.sin((x + z) * 0.03) * 0.14;
     }
 
-    // ── Materials (reused) ────────────────────────────────────────────────────
-    function stdMat(hex, rough, metal) {
-        return new THREE.MeshStandardMaterial({ color: hex, roughness: rough, metalness: metal || 0 });
+    // ── Material factory (flat-shading gives low-poly facet look) ─────────────
+    function sm(hex, rough, metal) {
+        return new THREE.MeshStandardMaterial({
+            color: hex, roughness: rough, metalness: metal || 0, flatShading: true
+        });
     }
-
-    const M = {
-        sand:     () => stdMat(0xd4a860, 0.97),
-        stone:    () => stdMat(0xc8a870, 0.92),
-        marble:   () => stdMat(0xf5eedf, 0.38, 0.08),
-        mudbrick: () => stdMat(0xb8956a, 0.96),
-        white:    () => stdMat(0xf4edda, 0.9),
-        gold:     () => stdMat(0xffd700, 0.15, 0.88),
-        wood:     () => stdMat(0x7a4520, 0.82, 0.05),
-        water:    () => new THREE.MeshStandardMaterial({
-                            color: 0x1e6a88, roughness: 0.05, metalness: 0.35,
-                            transparent: true, opacity: 0.82
-                        }),
-        palmTrunk:() => stdMat(0x8b6914, 0.9),
-        palmLeaf: () => new THREE.MeshStandardMaterial({
-                            color: 0x3a7d44, roughness: 0.8, side: THREE.DoubleSide
-                        }),
-        darkWood: () => stdMat(0x5a3010, 0.85),
+    // Shared palette
+    const PAL = {
+        sand:      sm(0xd4a860, 0.96),
+        sandLight: sm(0xe8c888, 0.94),
+        stone:     sm(0xc8a870, 0.88),
+        stoneDark: sm(0x9e845c, 0.90),
+        marble:    sm(0xf4edd8, 0.35, 0.08),
+        mudbrick:  sm(0xb8956a, 0.95),
+        mudbrick2: sm(0xc9a478, 0.93),
+        white:     sm(0xf2ebd8, 0.90),
+        gold:      sm(0xffd060, 0.18, 0.82),
+        wood:      sm(0x7a4520, 0.82, 0.06),
+        darkWood:  sm(0x4a2810, 0.85),
+        linen:     sm(0xf0e8d0, 0.92),
+        rust:      sm(0xb04020, 0.85),
+        orange:    sm(0xd06020, 0.85),
+        slate:     sm(0x888070, 0.80),
+        water:     new THREE.MeshStandardMaterial({
+                        color: 0x1e6a88, roughness: 0.05, metalness: 0.35,
+                        transparent: true, opacity: 0.80, flatShading: true
+                    }),
+        palmTrunk: sm(0x8b6914, 0.88),
+        palmLeaf:  new THREE.MeshStandardMaterial({
+                        color: 0x3a7d44, roughness: 0.80, side: THREE.DoubleSide, flatShading: true
+                    }),
+        tileLight: sm(0xd8cc9e, 0.72),
+        tileDark:  sm(0xbfb080, 0.76),
     };
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Geometry helpers ──────────────────────────────────────────────────────
     function box(w, h, d, mat) {
         const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
         m.castShadow = true; m.receiveShadow = true;
         return m;
     }
-    function cyl(rt, rb, h, seg, mat) {
-        const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
+    function cyl(rt, rb, h, s, mat) {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, s), mat);
         m.castShadow = true; m.receiveShadow = true;
         return m;
     }
     function place(obj, x, y, z) { obj.position.set(x, y, z); scene.add(obj); return obj; }
 
-    // Custom 4-sided pyramid geometry
     function pyramidGeo(base, height) {
         const h = base / 2;
-        const verts = new Float32Array([
-            -h,0,-h,  h,0,-h,  h,0, h,  -h,0, h,  0,height,0
-        ]);
-        const idx = [0,1,2, 0,2,3,  0,1,4, 1,2,4, 2,3,4, 3,0,4];
+        const v = new Float32Array([-h,0,-h, h,0,-h, h,0,h, -h,0,h, 0,height,0]);
+        const i = [0,1,2, 0,2,3, 0,1,4, 1,2,4, 2,3,4, 3,0,4];
         const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-        g.setIndex(idx);
-        g.computeVertexNormals();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+        g.setIndex(i); g.computeVertexNormals();
         return g;
+    }
+
+    // ── Paved stone path (InstancedMesh) ──────────────────────────────────────
+    function buildPavedPath(ox, oz, length, width) {
+        const tW = 1.8, tD = 1.8, gap = 0.12;
+        const step = tW + gap;
+        const cols = Math.ceil(width / step);
+        const rows = Math.ceil(length / step);
+        const count = cols * rows;
+
+        const geo  = new THREE.BoxGeometry(tW, 0.18, tD);
+        const inst = new THREE.InstancedMesh(geo, PAL.tileLight.clone(), count);
+        inst.receiveShadow = true;
+
+        const dummy = new THREE.Object3D();
+        let idx = 0;
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const tx = ox - (cols * step) / 2 + c * step + tW / 2;
+                const tz = oz - (rows * step) / 2 + r * step + tD / 2;
+                dummy.position.set(tx, terrainH(tx, tz) + 0.09, tz);
+                // Slight rotation per tile for natural look
+                dummy.rotation.y = Math.round(Math.sin(r * 7 + c * 13) * 2) * Math.PI / 2 * 0.05;
+                dummy.updateMatrix();
+                inst.setMatrixAt(idx++, dummy.matrix);
+            }
+        }
+        inst.instanceMatrix.needsUpdate = true;
+        scene.add(inst);
+    }
+
+    // ── Egyptian statue (simplified standing pharaoh) ─────────────────────────
+    function buildStatue(ox, oz, scale) {
+        scale = scale || 1;
+        const sc = scale;
+        const smat = PAL.stoneDark;
+
+        const g = new THREE.Group();
+        // Pedestal
+        g.add(Object.assign(box(1.2*sc, 0.8*sc, 1.2*sc, smat), { position: { x:0, y:0.4*sc, z:0 } }));
+        // Body
+        g.add(Object.assign(box(0.7*sc, 1.8*sc, 0.45*sc, smat), { position: { x:0, y:1.7*sc, z:0 } }));
+        // Head (tall with Nemes)
+        g.add(Object.assign(box(0.5*sc, 0.5*sc, 0.46*sc, smat), { position: { x:0, y:2.85*sc, z:0 } }));
+        // Nemes headdress
+        g.add(Object.assign(box(0.6*sc, 0.55*sc, 0.58*sc, PAL.stone), { position: { x:0, y:3.15*sc, z:0 } }));
+        // Arms at sides
+        [-0.42*sc, 0.42*sc].forEach(dx => {
+            g.add(Object.assign(box(0.22*sc, 1.6*sc, 0.22*sc, smat), { position: { x:dx, y:1.7*sc, z:0 } }));
+        });
+
+        g.position.set(ox, terrainH(ox, oz), oz);
+        g.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+        scene.add(g);
+    }
+
+    // ── Market stall (awning + table + goods) ─────────────────────────────────
+    function buildMarketStall(ox, oz, awningColor) {
+        awningColor = awningColor || PAL.orange;
+        const posts = [[-0.8,-0.8],[0.8,-0.8],[-0.8,0.8],[0.8,0.8]];
+        posts.forEach(([dx,dz]) => {
+            place(cyl(0.05, 0.05, 2.2, 5, PAL.wood),
+                  ox + dx, terrainH(ox+dx, oz+dz) + 1.1, oz + dz);
+        });
+        // Awning roof
+        const awn = box(1.9, 0.1, 2.1, awningColor);
+        awn.rotation.x = 0.18;
+        place(awn, ox, terrainH(ox, oz) + 2.2, oz);
+
+        // Table
+        place(box(1.5, 0.08, 0.9, PAL.wood), ox, terrainH(ox, oz) + 1.0, oz - 0.1);
+        place(box(0.06, 0.95, 0.06, PAL.darkWood), ox - 0.65, terrainH(ox, oz) + 0.48, oz - 0.4);
+        place(box(0.06, 0.95, 0.06, PAL.darkWood), ox + 0.65, terrainH(ox, oz) + 0.48, oz - 0.4);
+        place(box(0.06, 0.95, 0.06, PAL.darkWood), ox - 0.65, terrainH(ox, oz) + 0.48, oz + 0.4);
+        place(box(0.06, 0.95, 0.06, PAL.darkWood), ox + 0.65, terrainH(ox, oz) + 0.48, oz + 0.4);
+
+        // Goods on table (jars, cloth)
+        place(cyl(0.12, 0.08, 0.35, 8, PAL.rust), ox - 0.4, terrainH(ox, oz) + 1.22, oz - 0.1);
+        place(cyl(0.14, 0.09, 0.38, 8, PAL.mudbrick), ox + 0.15, terrainH(ox, oz) + 1.23, oz - 0.1);
+        place(box(0.3, 0.1, 0.5, PAL.linen), ox + 0.5, terrainH(ox, oz) + 1.08, oz - 0.05);
     }
 
     // ── Terrain ───────────────────────────────────────────────────────────────
     function buildTerrain() {
-        const SEGS = 120;
-        const SIZE = 500;
-        const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEGS, SEGS);
-        const pos = geo.attributes.position;
-
-        for (let i = 0; i < pos.count; i++) {
-            const x = pos.getX(i);
-            const y = pos.getY(i);   // local Y = world -Z after rotation
-            pos.setZ(i, terrainH(x, -y));
+        const SEGS = 140, SIZE = 500;
+        const geo  = new THREE.PlaneGeometry(SIZE, SIZE, SEGS, SEGS);
+        const posA = geo.attributes.position;
+        for (let i = 0; i < posA.count; i++) {
+            posA.setZ(i, terrainH(posA.getX(i), -posA.getY(i)));
         }
         geo.computeVertexNormals();
-
-        const mat = M.sand();
-        const mesh = new THREE.Mesh(geo, mat);
+        const mesh = new THREE.Mesh(geo, PAL.sand);
         mesh.rotation.x = -Math.PI / 2;
         mesh.receiveShadow = true;
         scene.add(mesh);
     }
 
-    // ── Sky (large inside-out sphere with vertex colours) ─────────────────────
+    // ── Sky (inside-out sphere, warm Egyptian palette) ────────────────────────
     function buildSky() {
-        const geo = new THREE.SphereGeometry(490, 32, 16);
+        const geo = new THREE.SphereGeometry(490, 36, 18);
         geo.scale(-1, 1, -1);
         const posA = geo.attributes.position;
         const cols = new Float32Array(posA.count * 3);
         for (let i = 0; i < posA.count; i++) {
-            const ny = (posA.getY(i) + 490) / 980; // 0–1
-            // horizon: warm sandy haze → zenith: deep Egyptian blue
-            const t = Math.max(0, Math.min(1, ny));
-            cols[i*3+0] = 0.85 - t * 0.62;   // R
-            cols[i*3+1] = 0.72 - t * 0.28;   // G
-            cols[i*3+2] = 0.48 + t * 0.42;   // B
+            const t = Math.max(0, Math.min(1, (posA.getY(i) + 490) / 980));
+            // horizon: amber haze → zenith: deep cerulean
+            cols[i*3+0] = 0.88 - t * 0.65;
+            cols[i*3+1] = 0.72 - t * 0.28;
+            cols[i*3+2] = 0.46 + t * 0.44;
         }
         geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
         scene.add(new THREE.Mesh(geo,
             new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
     }
 
-    // ── Lighting ──────────────────────────────────────────────────────────────
+    // ── Lighting (strong Egyptian sun) ────────────────────────────────────────
     function buildLighting() {
-        scene.add(new THREE.AmbientLight(0xffe5b0, 0.55));
-        scene.add(new THREE.HemisphereLight(0x87ceeb, 0xd4a055, 0.35));
+        scene.add(new THREE.AmbientLight(0xffe5a0, 0.55));
+        scene.add(new THREE.HemisphereLight(0x87ceeb, 0xd4a055, 0.40));
 
-        const sun = new THREE.DirectionalLight(0xfff8e7, 1.75);
-        sun.position.set(120, 220, 80);
+        const sun = new THREE.DirectionalLight(0xfff8e0, 2.0);
+        sun.position.set(120, 240, 100);
         sun.castShadow = true;
-        const sc = sun.shadow.camera;
-        Object.assign(sc, { near: 1, far: 500, left: -160, right: 160, top: 160, bottom: -160 });
+        Object.assign(sun.shadow.camera, { near:1, far:500, left:-160, right:160, top:160, bottom:-160 });
         sun.shadow.mapSize.set(2048, 2048);
         sun.shadow.bias = -0.0004;
         scene.add(sun);
 
-        const fill = new THREE.DirectionalLight(0x4477cc, 0.18);
-        fill.position.set(-80, 40, -60);
+        // Warm fill from opposite side (bounced light off sand)
+        const fill = new THREE.DirectionalLight(0xffcc80, 0.28);
+        fill.position.set(-80, 20, -80);
         scene.add(fill);
     }
 
-    // ── Pyramids (background, south) ─────────────────────────────────────────
+    // ── Pyramids ──────────────────────────────────────────────────────────────
     function buildPyramids() {
-        const mat = M.stone();
         const defs = [
-            { x: -195, z: -255, b: 65, h: 105 },
-            { x: -115, z: -265, b: 48, h:  78 },
-            { x:  -52, z: -272, b: 32, h:  52 },
+            { x:-192, z:-255, b:68, h:108 },
+            { x:-114, z:-265, b:50, h:80  },
+            { x: -50, z:-272, b:33, h:53  },
         ];
         defs.forEach(d => {
             const geo = pyramidGeo(d.b, d.h);
-            const m = new THREE.Mesh(geo, mat);
+            const m = new THREE.Mesh(geo, PAL.stone);
             m.position.set(d.x, terrainH(d.x, d.z), d.z);
             m.castShadow = true; m.receiveShadow = true;
             scene.add(m);
-            // Causeway base
-            const base = box(d.b + 4, 1.5, d.b + 4, M.stone());
-            base.position.set(d.x, terrainH(d.x, d.z) + 0.75, d.z);
+            const base = box(d.b + 6, 1.8, d.b + 6, PAL.stoneDark);
+            base.position.set(d.x, terrainH(d.x, d.z) + 0.9, d.z);
             scene.add(base);
         });
     }
 
     // ── Temple of Serapis ─────────────────────────────────────────────────────
     function buildTemple(ox, oz) {
-        const stone  = M.stone();
-        const marble = M.marble();
+        const base = terrainH(ox, oz);
 
-        // Stepped platform
-        const steps = [[26, 1.6, 16], [23, 0.8, 13], [20, 0.6, 11]];
-        steps.forEach(([w, h, d], i) => {
-            const b = box(w, h, d, stone);
-            b.position.set(ox, terrainH(ox, oz) + i * 1.0 + h / 2, oz);
+        // Stepped platform (3 levels)
+        [[28,1.8,17],[25,0.9,14],[22,0.6,12]].forEach(([w,h,d], i) => {
+            const b = box(w, h, d, PAL.stone);
+            b.position.set(ox, base + i * 1.1 + h/2, oz);
             scene.add(b);
         });
-        const baseY = terrainH(ox, oz) + 3.0;
+        const platY = base + 3.4;
 
-        // Inner cella walls
-        const cella = box(18, 5.5, 9, stone);
-        cella.position.set(ox, baseY + 2.75, oz);
+        // Cella walls
+        const cella = box(20, 6.0, 9.5, PAL.stone);
+        cella.position.set(ox, platY + 3.0, oz);
         scene.add(cella);
 
-        // Columns – front & back rows (7 per row)
-        const colX = [-9, -6, -3, 0, 3, 6, 9];
-        colX.forEach(cx => {
-            [-5.5, 5.5].forEach(cz => {
-                const col = cyl(0.38, 0.48, 6.5, 12, marble);
-                col.position.set(ox + cx, baseY + 3.25, oz + cz);
+        // Window recesses on cella
+        [-6,-2,2,6].forEach(dx => {
+            const win = box(1.2, 2.0, 0.3, PAL.stoneDark);
+            win.position.set(ox + dx, platY + 3.5, oz + 4.85);
+            scene.add(win);
+            const win2 = win.clone();
+            win2.position.z = oz - 4.85;
+            scene.add(win2);
+        });
+
+        // Columns – front & back (9 per row)
+        const colXs = [-10, -7.5, -5, -2.5, 0, 2.5, 5, 7.5, 10];
+        colXs.forEach(cx => {
+            [-6, 6].forEach(cz => {
+                const col = cyl(0.40, 0.50, 7.0, 12, PAL.marble);
+                col.position.set(ox + cx, platY + 3.5, oz + cz);
                 scene.add(col);
                 // Capital
-                const cap = box(0.9, 0.55, 0.9, marble);
-                cap.position.set(ox + cx, baseY + 6.75, oz + cz);
+                const cap = box(1.0, 0.55, 1.0, PAL.marble);
+                cap.position.set(ox + cx, platY + 7.2, oz + cz);
                 scene.add(cap);
             });
         });
 
         // Entablature
-        [-5.5, 5.5].forEach(cz => {
-            const ent = box(26, 0.9, 0.9, stone);
-            ent.position.set(ox, baseY + 7.1, oz + cz);
+        [-6, 6].forEach(cz => {
+            const ent = box(28, 1.0, 1.0, PAL.stone);
+            ent.position.set(ox, platY + 7.5, oz + cz);
             scene.add(ent);
         });
 
-        // Roof slab
-        const roof = box(25, 0.55, 13, stone);
-        roof.position.set(ox, baseY + 7.6, oz);
+        // Roof + pediments
+        const roof = box(27, 0.6, 14, PAL.stone);
+        roof.position.set(ox, platY + 8.1, oz);
         scene.add(roof);
-
-        // Pediment (front & back triangles)
-        [-5.5, 5.5].forEach(cz => {
-            const ped = new THREE.Mesh(pyramidGeo(25, 3.5), stone);
-            ped.rotation.y = Math.PI / 2;
-            ped.scale.set(0.45, 1, 1);
-            ped.position.set(ox, baseY + 7.6, oz + cz);
+        [-6, 6].forEach(cz => {
+            const ped = new THREE.Mesh(pyramidGeo(27, 3.8), PAL.stone);
+            ped.rotation.y = Math.PI / 2; ped.scale.set(0.48, 1, 1);
+            ped.position.set(ox, platY + 8.1, oz + cz);
             scene.add(ped);
         });
 
-        // Altar in front
-        const altar = box(4, 1.2, 4, stone);
-        altar.position.set(ox, terrainH(ox, oz + 12) + 0.6, oz + 12);
+        // Entrance statues
+        buildStatue(ox - 8, oz + 10, 1.1);
+        buildStatue(ox + 8, oz + 10, 1.1);
+
+        // Altar
+        const altar = box(4.5, 1.4, 4.5, PAL.stoneDark);
+        altar.position.set(ox, base + 0.7, oz + 14);
         scene.add(altar);
+        // Altar flame (orange sphere)
+        const flame = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 6),
+            new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff4400, emissiveIntensity: 1.2, flatShading: true }));
+        flame.position.set(ox, base + 1.9, oz + 14);
+        scene.add(flame);
+        const altarLight = new THREE.PointLight(0xff8833, 1.5, 18);
+        altarLight.position.set(ox, base + 2.5, oz + 14);
+        scene.add(altarLight);
     }
 
-    // ── Canopic Way colonnade ─────────────────────────────────────────────────
+    // ── Canopic Way (colonnade + paved road) ──────────────────────────────────
     function buildColonnade(ox, oz, length) {
-        const marble = M.marble();
-        const roadMat = stdMat(0xdfcc82, 0.9);
-        const n = Math.floor(length / 5);
+        const n = Math.floor(length / 5.2);
         for (let i = 0; i <= n; i++) {
-            const cx = ox - length / 2 + i * 5;
-            [-5, 5].forEach(cz => {
-                const col = cyl(0.28, 0.36, 5.5, 10, marble);
-                col.position.set(cx, terrainH(cx, oz + cz) + 2.75, oz + cz);
+            const cx = ox - length / 2 + i * 5.2;
+            [-5.5, 5.5].forEach(cz => {
+                const col = cyl(0.30, 0.40, 5.8, 10, PAL.marble);
+                col.position.set(cx, terrainH(cx, oz + cz) + 2.9, oz + cz);
                 scene.add(col);
+                const cap = box(0.88, 0.5, 0.88, PAL.marble);
+                cap.position.set(cx, terrainH(cx, oz + cz) + 5.95, oz + cz);
+                scene.add(cap);
             });
+            // Entablature beam sections
+            if (i < n) {
+                [-5.5, 5.5].forEach(cz => {
+                    const beam = box(5.2, 0.55, 0.55, PAL.stone);
+                    beam.position.set(cx + 2.6, terrainH(cx, oz + cz) + 6.1, oz + cz);
+                    scene.add(beam);
+                });
+            }
         }
-        const road = box(length + 2, 0.12, 8, roadMat);
-        road.position.set(ox, terrainH(ox, oz) + 0.06, oz);
-        road.receiveShadow = true;
-        scene.add(road);
+        // Paved road
+        buildPavedPath(ox, oz, length + 4, 9);
     }
 
     // ── City walls & towers ───────────────────────────────────────────────────
     function buildCityWalls() {
-        const stone = M.stone();
-
-        const walls = [
-            { x: 0,   z: -82, w: 106, h: 7,  d: 3.5 },
-            { x: -53, z: -48, w: 3.5, h: 7,  d: 66  },
-            { x:  53, z: -48, w: 3.5, h: 7,  d: 66  },
-            { x: 0,   z: -15, w: 106, h: 5,  d: 3.5 },
+        const wallDefs = [
+            { x:  0, z:-82, w:108, h:7.5, d:3.5 },
+            { x:-54, z:-48, w:3.5, h:7.5, d:66  },
+            { x: 54, z:-48, w:3.5, h:7.5, d:66  },
+            { x:  0, z:-15, w:108, h:5.5, d:3.5 },
         ];
-        walls.forEach(w => {
-            const wall = box(w.w, w.h, w.d, stone);
+        wallDefs.forEach(w => {
+            const wall = box(w.w, w.h, w.d, PAL.stone);
             wall.position.set(w.x, terrainH(w.x, w.z) + w.h / 2, w.z);
             scene.add(wall);
-            // Merlons
-            const mCount = Math.floor(Math.max(w.w, w.d) / 3.5);
+            // Crenellations
+            const mCount = Math.floor(Math.max(w.w, w.d) / 3.8);
             for (let i = 0; i < mCount; i++) {
-                const merlon = box(1.4, 1.4, Math.min(w.d, 1.4) + 0.2, stone);
-                const mPos = (w.w > w.d)
-                    ? [w.x - w.w / 2 + i * 3.5 + 1.75, terrainH(w.x, w.z) + w.h + 0.7, w.z]
-                    : [w.x, terrainH(w.x, w.z) + w.h + 0.7, w.z - w.d / 2 + i * 3.5 + 1.75];
-                merlon.position.set(...mPos);
-                scene.add(merlon);
+                const mer = box(1.5, 1.6, Math.min(w.d, 1.5) + 0.2, PAL.stoneDark);
+                const ix = (w.w > w.d)
+                    ? w.x - w.w/2 + i * 3.8 + 1.9
+                    : w.x;
+                const iz = (w.w > w.d)
+                    ? w.z
+                    : w.z - w.d/2 + i * 3.8 + 1.9;
+                mer.position.set(ix, terrainH(w.x, w.z) + w.h + 0.8, iz);
+                scene.add(mer);
             }
         });
 
-        buildTower(-53, -82, stone);
-        buildTower( 53, -82, stone);
-        buildTower(-53, -15, stone);
-        buildTower( 53, -15, stone);
+        // Gate arch
+        buildGateArch(0, -82);
+        // Corner towers
+        [[-54,-82],[54,-82],[-54,-15],[54,-15]].forEach(([x,z]) => buildTower(x, z));
     }
 
-    function buildTower(x, z, mat) {
-        const t = box(9, 14, 9, mat);
-        t.position.set(x, terrainH(x, z) + 7, z);
+    function buildTower(x, z) {
+        const t = box(10, 15, 10, PAL.stone);
+        t.position.set(x, terrainH(x, z) + 7.5, z);
         scene.add(t);
-        const cap = box(10.5, 1.2, 10.5, mat);
-        cap.position.set(x, terrainH(x, z) + 14.6, z);
+        const cap = box(11.5, 1.4, 11.5, PAL.stoneDark);
+        cap.position.set(x, terrainH(x, z) + 15.7, z);
         scene.add(cap);
-        // Arrow slits (just dark recessed boxes for visual)
-        const slit = box(0.3, 1.0, 0.25, stdMat(0x1a1208, 0.9));
+        // Arrow slits
         for (let i = 0; i < 4; i++) {
             const a = i * Math.PI / 2;
-            const s = slit.clone();
-            s.position.set(x + Math.cos(a) * 4.55, terrainH(x,z) + 8, z + Math.sin(a) * 4.55);
-            s.rotation.y = a;
-            scene.add(s);
+            const sl = box(0.3, 1.2, 0.28, sm(0x1a1208, 0.95));
+            sl.position.set(x + Math.cos(a) * 5.1, terrainH(x,z) + 8, z + Math.sin(a) * 5.1);
+            sl.rotation.y = a;
+            scene.add(sl);
         }
+    }
+
+    function buildGateArch(ox, oz) {
+        // Two tall pilons flanking an entry
+        [[-6.5, 0],[6.5, 0]].forEach(([dx]) => {
+            const pilon = box(5, 20, 8, PAL.stone);
+            pilon.position.set(ox + dx, terrainH(ox, oz) + 10, oz);
+            scene.add(pilon);
+        });
+        // Lintel
+        const lintel = box(17, 2.5, 8, PAL.stoneDark);
+        lintel.position.set(ox, terrainH(ox, oz) + 20.8, oz);
+        scene.add(lintel);
+        // Road through gate
+        buildPavedPath(ox, oz + 4, 12, 11);
     }
 
     // ── Obelisks ──────────────────────────────────────────────────────────────
     function buildObelisks() {
-        const stoneMat = M.stone();
-        const goldMat  = M.gold();
-        const locs = [{ x: 22, z: -38 }, { x: -22, z: -38 }];
-        locs.forEach(o => {
-            // Base
-            const base = box(2.2, 1.8, 2.2, stoneMat);
-            base.position.set(o.x, terrainH(o.x, o.z) + 0.9, o.z);
+        [[22,-38],[-22,-38]].forEach(([ox, oz]) => {
+            const base = box(2.5, 2.0, 2.5, PAL.stone);
+            base.position.set(ox, terrainH(ox, oz) + 1.0, oz);
             scene.add(base);
-            // Shaft
-            const shaft = box(1.1, 16, 1.1, stoneMat);
-            shaft.position.set(o.x, terrainH(o.x, o.z) + 1.8 + 8, o.z);
+            const shaft = box(1.2, 18, 1.2, PAL.stone);
+            shaft.position.set(ox, terrainH(ox, oz) + 2.0 + 9, oz);
             shaft.castShadow = true;
             scene.add(shaft);
-            // Pyramidion (gold tip)
-            const cap = new THREE.Mesh(pyramidGeo(1.3, 2.2), goldMat);
-            cap.position.set(o.x, terrainH(o.x, o.z) + 17.8, o.z);
+            const cap = new THREE.Mesh(pyramidGeo(1.4, 2.4), PAL.gold);
+            cap.position.set(ox, terrainH(ox, oz) + 20.0, oz);
             scene.add(cap);
         });
     }
 
     // ── Pharos Lighthouse ─────────────────────────────────────────────────────
     function buildPharos(ox, oz) {
-        const stone  = M.stone();
-        const marble = M.marble();
-        const gold   = M.gold();
-        const base   = terrainH(ox, oz);
+        const base = terrainH(ox, oz);
 
-        // Level 1 – large square
-        const l1 = box(22, 32, 22, stone);
-        l1.position.set(ox, base + 16, oz);
+        // Level 1 – square
+        const l1 = box(24, 34, 24, PAL.stone);
+        l1.position.set(ox, base + 17, oz);
         scene.add(l1);
-
-        // Level 1 columns (decorative)
+        // Level 1 window recesses
+        [0, Math.PI/2, Math.PI, Math.PI*1.5].forEach(a => {
+            const win = box(3, 4, 0.4, PAL.stoneDark);
+            win.position.set(ox + Math.cos(a)*12.1, base + 18, oz + Math.sin(a)*12.1);
+            win.rotation.y = a;
+            scene.add(win);
+        });
+        // Decorative columns on level 1
         for (let i = 0; i < 8; i++) {
-            const a = i * Math.PI / 4;
-            const col = cyl(0.55, 0.65, 9, 10, marble);
-            col.position.set(ox + Math.cos(a)*8, base + 4.5, oz + Math.sin(a)*8);
+            const a = (i / 8) * Math.PI * 2;
+            const col = cyl(0.6, 0.7, 9, 10, PAL.marble);
+            col.position.set(ox + Math.cos(a) * 9, base + 4.5, oz + Math.sin(a) * 9);
             scene.add(col);
         }
 
-        // Level 2 – octagonal
-        const l2 = cyl(9, 9, 22, 8, marble);
-        l2.position.set(ox, base + 32 + 11, oz);
+        // Level 2 – octagonal marble
+        const l2 = cyl(10, 10, 24, 8, PAL.marble);
+        l2.position.set(ox, base + 34 + 12, oz);
         scene.add(l2);
 
         // Level 3 – cylindrical
-        const l3 = cyl(4.5, 5.5, 16, 12, marble);
-        l3.position.set(ox, base + 54 + 8, oz);
+        const l3 = cyl(5, 6, 18, 12, PAL.marble);
+        l3.position.set(ox, base + 58 + 9, oz);
         scene.add(l3);
 
         // Beacon dome
-        const domeGeo = new THREE.SphereGeometry(4.5, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-        const dome = new THREE.Mesh(domeGeo, gold);
-        dome.position.set(ox, base + 70, oz);
+        const domeGeo = new THREE.SphereGeometry(5, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+        const dome = new THREE.Mesh(domeGeo, PAL.gold);
+        dome.position.set(ox, base + 75, oz);
         dome.castShadow = true;
         scene.add(dome);
 
-        // Beacon fire light
-        beaconLight = new THREE.PointLight(0xff9933, 3.5, 280);
-        beaconLight.position.set(ox, base + 76, oz);
-        scene.add(beaconLight);
+        // Beacon fire
+        const fireGeo = new THREE.SphereGeometry(1.8, 8, 6);
+        const fireMat = new THREE.MeshStandardMaterial({
+            color: 0xff6600, emissive: 0xff4400, emissiveIntensity: 2.0, flatShading: true
+        });
+        const fire = new THREE.Mesh(fireGeo, fireMat);
+        fire.position.set(ox, base + 82, oz);
+        scene.add(fire);
 
-        // Smaller fill glow
-        const glow = new THREE.PointLight(0xff6600, 1.2, 120);
-        glow.position.set(ox, base + 72, oz);
+        beaconLight = new THREE.PointLight(0xff9933, 4.0, 350);
+        beaconLight.position.set(ox, base + 84, oz);
+        scene.add(beaconLight);
+        const glow = new THREE.PointLight(0xff6600, 1.5, 140);
+        glow.position.set(ox, base + 80, oz);
         scene.add(glow);
     }
 
-    // ── Nile (river on north edge) ────────────────────────────────────────────
+    // ── Nile ──────────────────────────────────────────────────────────────────
     function buildNile() {
-        const waterGeo = new THREE.PlaneGeometry(320, 45, 24, 6);
-        waterMesh = new THREE.Mesh(waterGeo, M.water());
+        const geo = new THREE.PlaneGeometry(340, 46, 28, 8);
+        waterMesh = new THREE.Mesh(geo, PAL.water);
         waterMesh.rotation.x = -Math.PI / 2;
         waterMesh.position.set(0, -0.35, 152);
         waterMesh.receiveShadow = true;
         scene.add(waterMesh);
 
         // Banks
-        const bankMat = M.mudbrick();
-        const b1 = box(320, 0.5, 6, bankMat);
+        const b1 = box(340, 0.6, 7, PAL.mudbrick);
         b1.position.set(0, -0.1, 130);
         scene.add(b1);
-        const b2 = box(320, 0.5, 6, bankMat);
-        b2.position.set(0, -0.1, 174);
+        const b2 = b1.clone();
+        b2.position.z = 175;
         scene.add(b2);
 
-        // Papyrus clumps (simple thin cylinders)
-        for (let i = 0; i < 30; i++) {
-            const px = (Math.random() - 0.5) * 280;
-            const pz = 128 + Math.random() * 6;
-            for (let j = 0; j < 4; j++) {
-                const stem = cyl(0.04, 0.05, 2.5 + Math.random(), 5, stdMat(0x5a8040, 0.9));
-                stem.position.set(px + (Math.random() - 0.5) * 0.8, terrainH(px, pz) + 1.25, pz + j * 0.3);
+        // Papyrus clusters
+        for (let i = 0; i < 35; i++) {
+            const px = (Math.random() - 0.5) * 300;
+            const pz = 128 + Math.random() * 5;
+            for (let j = 0; j < 5; j++) {
+                const stem = cyl(0.04, 0.05, 2.5 + Math.random() * 0.8, 5, sm(0x4a7835, 0.9));
+                stem.position.set(px + (Math.random()-0.5) * 0.8, terrainH(px, pz) + 1.25, pz + j * 0.3);
                 scene.add(stem);
+                // Papyrus head
+                const head = cyl(0.2, 0.05, 0.4, 8, sm(0x6a9840, 0.9));
+                head.position.set(px + (Math.random()-0.5)*0.8, terrainH(px,pz)+2.8, pz+j*0.3);
+                scene.add(head);
             }
         }
     }
 
     // ── Market district ───────────────────────────────────────────────────────
     function buildMarket(ox, oz) {
-        const defs = [
-            [-14,  -9, 11, 4.5, 9,  M.mudbrick],
-            [ -1,  -11, 13, 5.5, 11, M.white],
-            [ 15,   -7,  9,   4, 8,  M.mudbrick],
-            [-17,   6,  8,   5, 10, M.white],
-            [ -4,   9, 11, 6.5, 9,  M.stone],
-            [ 12,   7, 10,   4, 8,  M.mudbrick],
+        // Buildings
+        const bDefs = [
+            [-14, -10, 12, 5.0, 10, PAL.mudbrick],
+            [ -1, -12, 14, 6.0, 11, PAL.white],
+            [ 15,  -8, 10, 4.5,  9, PAL.mudbrick2],
+            [-17,   5,  9, 5.5, 10, PAL.white],
+            [ -5,   8, 11, 7.0,  9, PAL.stone],
+            [ 11,   6, 10, 4.5,  8, PAL.mudbrick],
         ];
-        defs.forEach(([dx, dz, w, h, d, matFn]) => {
-            const b = box(w, h, d, matFn());
-            b.position.set(ox + dx, terrainH(ox+dx, oz+dz) + h/2, oz + dz);
+        bDefs.forEach(([dx, dz, w, h, d, mat]) => {
+            const bx = ox + dx, bz = oz + dz;
+            const b = box(w, h, d, mat);
+            b.position.set(bx, terrainH(bx, bz) + h/2, bz);
             scene.add(b);
-            // Flat roof rim
-            const rim = box(w + 0.4, 0.4, d + 0.4, M.stone());
-            rim.position.set(ox+dx, terrainH(ox+dx, oz+dz) + h + 0.2, oz+dz);
-            scene.add(rim);
+            // Flat roof lip
+            const lip = box(w + 0.4, 0.4, d + 0.4, PAL.stoneDark);
+            lip.position.set(bx, terrainH(bx, bz) + h + 0.2, bz);
+            scene.add(lip);
+            // Door recess
+            const door = box(1.2, 2.5, 0.35, PAL.stoneDark);
+            door.position.set(bx, terrainH(bx, bz) + 1.25, bz + d/2 + 0.01);
+            scene.add(door);
+            // Windows
+            [-2.5, 2.5].forEach(wdx => {
+                const win = box(0.9, 1.1, 0.3, PAL.stoneDark);
+                win.position.set(bx + wdx, terrainH(bx, bz) + h * 0.65, bz + d/2 + 0.01);
+                scene.add(win);
+            });
         });
-        // Market awnings (coloured flat boxes)
-        const awningColors = [0xc0392b, 0x2980b9, 0xe67e22, 0x27ae60];
-        for (let i = 0; i < 8; i++) {
-            const aMat = new THREE.MeshStandardMaterial({ color: awningColors[i%4], roughness: 0.9 });
-            const aw = box(3.5, 0.08, 1.5, aMat);
-            aw.position.set(ox - 20 + i * 5, terrainH(ox, oz) + 3, oz - 5);
-            scene.add(aw);
+
+        // Market stalls along street
+        const awnings = [PAL.orange, PAL.rust, PAL.linen, PAL.orange, PAL.rust];
+        for (let i = 0; i < 5; i++) {
+            buildMarketStall(ox - 22 + i * 8, oz - 3, awnings[i]);
+        }
+
+        // Central well
+        const wellBase = cyl(1.1, 1.1, 1.0, 10, PAL.stone);
+        wellBase.position.set(ox, terrainH(ox, oz) + 0.5, oz + 18);
+        scene.add(wellBase);
+        const wellRim = cyl(1.15, 1.15, 0.25, 10, PAL.stoneDark);
+        wellRim.position.set(ox, terrainH(ox, oz) + 1.13, oz + 18);
+        scene.add(wellRim);
+        // Well post
+        const post = cyl(0.1, 0.1, 2.0, 6, PAL.wood);
+        post.position.set(ox, terrainH(ox, oz) + 2.0, oz + 18);
+        scene.add(post);
+        const crossbeam = box(2.2, 0.15, 0.15, PAL.wood);
+        crossbeam.position.set(ox, terrainH(ox, oz) + 3.1, oz + 18);
+        scene.add(crossbeam);
+
+        // Crates & amphoras scattered
+        for (let i = 0; i < 10; i++) {
+            const cx = ox + (Math.random() - 0.5) * 30;
+            const cz = oz + (Math.random() - 0.5) * 20;
+            if (Math.random() > 0.5) {
+                const crate = box(0.7, 0.7, 0.7, PAL.wood);
+                crate.position.set(cx, terrainH(cx, cz) + 0.35, cz);
+                scene.add(crate);
+            } else {
+                const amp = cyl(0.18, 0.10, 0.65, 8, PAL.rust);
+                amp.position.set(cx, terrainH(cx, cz) + 0.33, cz);
+                scene.add(amp);
+            }
         }
     }
 
     // ── Palm trees ────────────────────────────────────────────────────────────
     function buildPalmTrees() {
         const locs = [];
-        // Along the Nile bank
-        for (let i = 0; i < 22; i++) {
-            locs.push({ x: -130 + i * 12, z: 124 + Math.random() * 6 });
+        for (let i = 0; i < 24; i++) {
+            locs.push({ x: -135 + i * 11.5 + (Math.random()-0.5)*3, z: 122 + Math.random() * 6 });
         }
-        // Around the city
-        for (let i = 0; i < 18; i++) {
-            const a = (i / 18) * Math.PI * 2;
-            const r = 38 + Math.random() * 32;
+        for (let i = 0; i < 20; i++) {
+            const a = (i / 20) * Math.PI * 2;
+            const r = 40 + Math.random() * 34;
             locs.push({ x: Math.cos(a) * r, z: Math.sin(a) * r - 22 });
         }
         locs.forEach(l => buildPalmTree(l.x, l.z));
     }
 
     function buildPalmTree(x, z) {
-        const h = 5.5 + Math.random() * 4.5;
-        const trunk = cyl(0.1, 0.2, h, 6, M.palmTrunk());
-        trunk.position.set(x, terrainH(x, z) + h / 2, z);
-        trunk.rotation.z = (Math.random() - 0.5) * 0.18;
+        const h = 5.5 + Math.random() * 5.0;
+        const trunk = cyl(0.11, 0.22, h, 7, PAL.palmTrunk);
+        trunk.position.set(x, terrainH(x, z) + h/2, z);
+        trunk.rotation.z = (Math.random() - 0.5) * 0.2;
+        trunk.rotation.x = (Math.random() - 0.5) * 0.08;
         scene.add(trunk);
 
-        const leafMat = M.palmLeaf();
-        for (let i = 0; i < 9; i++) {
-            const a = (i / 9) * Math.PI * 2;
-            const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, 2.6), leafMat);
+        // Fronds (more fronds for fuller look)
+        for (let i = 0; i < 11; i++) {
+            const a = (i / 11) * Math.PI * 2;
+            const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 2.8), PAL.palmLeaf);
             leaf.castShadow = true;
-            leaf.position.set(x + Math.cos(a) * 0.85, terrainH(x, z) + h + 0.5, z + Math.sin(a) * 0.85);
+            leaf.position.set(x + Math.cos(a)*0.9, terrainH(x,z)+h+0.55, z + Math.sin(a)*0.9);
             leaf.rotation.y = a;
-            leaf.rotation.x = 0.45 + Math.random() * 0.25;
+            leaf.rotation.x = 0.45 + Math.random() * 0.28;
             scene.add(leaf);
         }
-        // Dates cluster
-        const dateMat = stdMat(0xc8650a, 0.8);
-        for (let i = 0; i < 3; i++) {
-            const cluster = cyl(0.18, 0.18, 0.6, 6, dateMat);
-            cluster.position.set(x + (Math.random()-0.5)*0.8, terrainH(x,z)+h-0.3, z+(Math.random()-0.5)*0.8);
-            scene.add(cluster);
+
+        // Date clusters
+        for (let i = 0; i < 4; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const dc = cyl(0.16, 0.16, 0.55, 7, sm(0xc8600a, 0.8));
+            dc.position.set(x + Math.cos(a)*0.7, terrainH(x,z)+h-0.25, z + Math.sin(a)*0.7);
+            scene.add(dc);
+        }
+    }
+
+    // ── Sphinx ────────────────────────────────────────────────────────────────
+    function buildSphinx(ox, oz) {
+        // Body
+        const body = box(11, 4.5, 24, PAL.sand);
+        body.position.set(ox, terrainH(ox, oz) + 2.25, oz);
+        scene.add(body);
+        // Head
+        const head = box(4.8, 5.0, 5.0, PAL.sand);
+        head.position.set(ox, terrainH(ox, oz) + 6.25, oz - 9.5);
+        scene.add(head);
+        // Nemes headdress
+        const nemes = box(5.4, 3.5, 5.5, sm(0xd4aa40, 0.55, 0.22));
+        nemes.position.set(ox, terrainH(ox, oz) + 8.7, oz - 9.5);
+        scene.add(nemes);
+        // Paws
+        [[3.8,0.8],[-3.8,0.8]].forEach(([dx]) => {
+            const paw = box(3.8, 2.0, 7, PAL.sand);
+            paw.position.set(ox + dx, terrainH(ox, oz) + 1.0, oz - 14);
+            scene.add(paw);
+        });
+    }
+
+    // ── Sand dune patches ─────────────────────────────────────────────────────
+    function buildDuneDetails() {
+        for (let i = 0; i < 42; i++) {
+            const rx = (Math.random() - 0.5) * 440;
+            const rz = (Math.random() - 0.5) * 440;
+            if (Math.abs(rx) < 40 && Math.abs(rz) < 40) continue;
+            const s = 2.5 + Math.random() * 5;
+            const geo = new THREE.SphereGeometry(s, 7, 4);
+            geo.scale(1, 0.22, 1);
+            const dune = new THREE.Mesh(geo, Math.random() > 0.5 ? PAL.sand : PAL.sandLight);
+            dune.position.set(rx, terrainH(rx, rz) + 0.12, rz);
+            dune.receiveShadow = true;
+            scene.add(dune);
         }
     }
 
     // ── Scattered rocks & props ───────────────────────────────────────────────
     function buildScatteredProps() {
-        const rockMat = M.stone();
-        for (let i = 0; i < 40; i++) {
-            const rx = (Math.random() - 0.5) * 420;
-            const rz = (Math.random() - 0.5) * 420;
-            if (Math.abs(rx) < 25 && Math.abs(rz) < 25) continue;
-            const s  = 0.4 + Math.random() * 1.2;
+        for (let i = 0; i < 50; i++) {
+            const rx = (Math.random() - 0.5) * 430;
+            const rz = (Math.random() - 0.5) * 430;
+            if (Math.abs(rx) < 28 && Math.abs(rz) < 28) continue;
+            const s = 0.3 + Math.random() * 1.4;
             const rock = new THREE.Mesh(
                 new THREE.DodecahedronGeometry(s, 0),
-                rockMat
+                Math.random() > 0.5 ? PAL.stone : PAL.stoneDark
             );
-            rock.scale.set(1, 0.55 + Math.random()*0.4, 1);
+            rock.scale.set(1, 0.50 + Math.random() * 0.4, 1);
             rock.rotation.set(Math.random(), Math.random(), Math.random());
-            rock.position.set(rx, terrainH(rx, rz) + s * 0.25, rz);
+            rock.position.set(rx, terrainH(rx, rz) + s * 0.22, rz);
             rock.castShadow = true;
             scene.add(rock);
-        }
-
-        // Amphorae near market
-        const amphoraMat = stdMat(0xa85428, 0.85);
-        for (let i = 0; i < 12; i++) {
-            const ax = -28 + i * 5;
-            const az = -5 + Math.random() * 4;
-            const a = cyl(0.2, 0.12, 0.7, 8, amphoraMat);
-            a.position.set(ax, terrainH(ax, az) + 0.35, az);
-            scene.add(a);
-        }
-    }
-
-    // ── Sphinx (simple) ───────────────────────────────────────────────────────
-    function buildSphinx(ox, oz) {
-        const mat = M.sand();
-        // Body
-        const body = box(10, 4, 22, mat);
-        body.position.set(ox, terrainH(ox, oz) + 2, oz);
-        scene.add(body);
-        // Head
-        const head = box(4.5, 4.5, 4.5, mat);
-        head.position.set(ox, terrainH(ox, oz) + 5.5, oz - 9);
-        scene.add(head);
-        // Nemes
-        const nemes = box(5, 3, 5, stdMat(0xd4aa40, 0.6, 0.2));
-        nemes.position.set(ox, terrainH(ox, oz) + 7.5, oz - 9);
-        scene.add(nemes);
-        // Front paws
-        const paw = box(3.5, 1.8, 6, mat);
-        [-1.7, 1.7].forEach(dx => {
-            const p = paw.clone();
-            p.position.set(ox + dx, terrainH(ox, oz) + 0.9, oz - 13);
-            scene.add(p);
-        });
-    }
-
-    // ── Sand dune detail patches ───────────────────────────────────────────────
-    function buildDuneDetails() {
-        const mat = M.sand();
-        for (let i = 0; i < 35; i++) {
-            const x = (Math.random() - 0.5) * 440;
-            const z = (Math.random() - 0.5) * 440;
-            if (Math.abs(x) < 35 && Math.abs(z) < 35) continue;
-            const geo = new THREE.SphereGeometry(2.5 + Math.random() * 4.5, 7, 4);
-            geo.scale(1, 0.22, 1);
-            const dune = new THREE.Mesh(geo, mat);
-            dune.position.set(x, terrainH(x, z) + 0.15, z);
-            dune.receiveShadow = true;
-            scene.add(dune);
         }
     }
 
@@ -519,25 +669,24 @@ const World = (() => {
         buildLighting();
         buildDuneDetails();
         buildPyramids();
-        buildPharos(118, -82);
-        buildTemple(32, -44);
-        buildColonnade(0, -52, 64);
+        buildPharos(120, -84);
+        buildTemple(32, -46);
+        buildColonnade(0, -54, 66);
         buildObelisks();
         buildCityWalls();
         buildMarket(-28, -20);
         buildNile();
         buildPalmTrees();
-        buildSphinx(-80, -110);
+        buildSphinx(-80, -112);
         buildScatteredProps();
     }
 
     function update(dt, elapsed) {
         if (waterMesh) {
-            const h = 0.54 + Math.sin(elapsed * 0.45) * 0.02;
-            waterMesh.material.color.setHSL(h, 0.62, 0.32);
+            waterMesh.material.color.setHSL(0.55 + Math.sin(elapsed * 0.42) * 0.018, 0.62, 0.32);
         }
         if (beaconLight) {
-            beaconLight.intensity = 3.5 + Math.sin(elapsed * 4.8) * 0.7 + Math.sin(elapsed * 11.3) * 0.25;
+            beaconLight.intensity = 4.0 + Math.sin(elapsed * 5.2) * 0.8 + Math.sin(elapsed * 12.7) * 0.3;
         }
     }
 

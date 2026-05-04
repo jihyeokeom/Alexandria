@@ -109,6 +109,7 @@
         Player.update(dt);
         GameCamera.update(Player.position, dx, dy);
         World.update(dt, elapsed);
+        VFX.update(dt, elapsed, Player.position);
 
         UI.update(
             Player.hp, Player.maxHp,
@@ -137,6 +138,7 @@
         // Build the world while the loading screen is shown
         World.init(scene);
         Player.init(scene);
+        VFX.init(scene);
         GameCamera.init(camera);
         Controls.init();     // registers listeners but stays inactive
 
