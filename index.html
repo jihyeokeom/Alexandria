@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>알렉산드리아 · 기원전 30년</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <!-- WebGL Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- ── HUD Overlay ── -->
+    <div id="hud">
+        <div id="location-label">기원전 30년 · 알렉산드리아 · 이집트</div>
+
+        <div id="bars">
+            <div class="bar-row">
+                <span class="bar-label">HP</span>
+                <div class="bar-bg"><div id="hp-fill"></div></div>
+            </div>
+            <div class="bar-row">
+                <span class="bar-label">ST</span>
+                <div class="bar-bg"><div id="st-fill"></div></div>
+            </div>
+        </div>
+
+        <div id="state-label"></div>
+        <div id="crosshair"></div>
+    </div>
+
+    <!-- Block vignette (always present, toggled via display) -->
+    <div id="block-vignette"></div>
+
+    <!-- Pointer lock prompt -->
+    <div id="lock-prompt">클릭하여 마우스 잠금 (ESC 로 해제)</div>
+
+    <!-- ── Controls Info Panel ── -->
+    <div id="controls-panel">
+        <div class="ctrl-row"><span class="key">W / A / S / D</span> 이동</div>
+        <div class="ctrl-row"><span class="key">Shift</span> 달리기</div>
+        <div class="ctrl-row"><span class="key">마우스 드래그</span> 시점 전환</div>
+        <div class="ctrl-row"><span class="key">좌클릭</span> 공격</div>
+        <div class="ctrl-row"><span class="key">우클릭 (홀드)</span> 방어</div>
+        <div class="ctrl-row"><span class="key">C</span> 앉기 / 일어서기</div>
+        <div class="ctrl-row"><span class="key">Z</span> 엎드리기 / 일어서기</div>
+        <div class="ctrl-row"><span class="key">ESC</span> 마우스 해제</div>
+    </div>
+
+    <!-- ── Loading Screen ── -->
+    <div id="loading-screen">
+        <div id="loading-box">
+            <div id="loading-title">알렉산드리아</div>
+            <div id="loading-track">
+                <div id="loading-fill"></div>
+            </div>
+            <div id="loading-status">초기화 중...</div>
+        </div>
+    </div>
+
+    <!-- ── Start Screen ── -->
+    <div id="start-screen" style="display:none;">
+        <div id="start-box">
+            <h1 id="game-title">알렉산드리아</h1>
+            <p id="game-sub">기원전 30년 &nbsp;·&nbsp; 고대 이집트</p>
+            <p id="game-desc">
+                클레오파트라 7세의 치세, 지중해 최대의 도시 알렉산드리아.<br>
+                파로스 등대의 불꽃이 타오르고, 세라피스 신전의 기둥이<br>
+                사막의 태양 아래 황금빛으로 빛난다.
+            </p>
+            <button id="start-btn">탐험 시작</button>
+            <p id="hint-text">화면 클릭 시 마우스가 잠깁니다 &nbsp;·&nbsp; ESC 로 해제</p>
+        </div>
+    </div>
+
+    <!-- Three.js (CDN, no npm required) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Game scripts (order matters) -->
+    <script src="js/controls.js"></script>
+    <script src="js/camera.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/world.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/main.js"></script>
+
+</body>
+</html>
